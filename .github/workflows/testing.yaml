@@ -50,37 +50,47 @@ jobs:
         with:
           persist-credentials: false
 
-      # Perform setup prior to running test(s)
-      - name: "Testing setup step"
+      - name: "Run publish.sh self-test"
+        shell: bash
+        run: bash tests/test_publish.sh
+
+      - name: "Create test m2repo"
         shell: bash
         run: |
-          # Testing setup step
-          echo "Testing setup step"
-          echo "Testing setup step/summary output" >> "$GITHUB_STEP_SUMMARY"
+          # Create test m2repo
+          d=m2repo/org/example/app/1.0.0
+          mkdir -p "$d"
+          touch "$d/app-1.0.0.jar" "$d/app-1.0.0.pom" "$d/app-1.0.0.jar.sha1"
 
-      - name: "Running local action: ${{ github.repository }}"
+      - name: "Running local action: dry run"
+        id: dry-run
         uses: $/
         with:
-          input: "test input 💬"
+          artifactory_url: "https://example.jfrog.io"
+          repository: "libs-release-local"
+          files_path: "m2repo"
+          dry_run: "true"
 
-      - name: "Validated local action: ${{ github.repository }}"
+      - name: "Validate dry run count"
         shell: bash
         env:
-          REPO: ${{ github.repository }}
+          COUNT: ${{ steps.dry-run.outputs.dry_run_count }}
         run: |
-          # Local action validation
-          echo "Validated local action: $REPO"
-          echo "Validation step summary output" >> "$GITHUB_STEP_SUMMARY"
+          # Validate dry run count
+          if [ "$COUNT" != "2" ]; then
+            echo "Error: expected dry_run_count 2, got '$COUNT' ❌"
+            exit 1
+          fi
 
-      # yamllint disable-line rule:line-length
-      - name: "Running local action: ${{ github.repository }} [Override Failure]"
-        uses: $/
+      - name: "Running local action: live run without token [Failure]"
         id: failure
+        uses: $/
         continue-on-error: true
         with:
-          invalid_input: "Some garbage"
+          artifactory_url: "https://example.jfrog.io"
+          repository: "libs-release-local"
+          files_path: "m2repo"
 
-      # Failure testing is also important
       - name: "Error if step above did NOT fail"
         if: steps.failure.outcome == 'success'
         shell: bash
@@ -88,3 +98,92 @@ jobs:
           # Error if step above did NOT fail
           echo "Error: previous test step did NOT fail ❌"
           exit 1
+
+  ### Live upload; opt in by setting the ARTIFACTORY_URL variable ###
+  integration:
+    name: "Live upload to Artifactory"
+    # Fork and Dependabot PRs get no environment secret; skip them
+    if: >-
+      vars.ARTIFACTORY_URL != '' &&
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    # Scopes the token to a dedicated environment
+    environment: integration-auto
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    env:
+      REPO_KEY: ${{ vars.ARTIFACTORY_REPOSITORY }}
+      GROUP_PATH: "org/lfreleng/test/artifactory-publish-action"
+      VERSION: "0.0.${{ github.run_id }}-${{ github.run_attempt }}"
+    steps:
+      # Audit only: the Artifactory host is per-repository configuration
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
+        with:
+          egress-policy: 'audit'
+
+      - name: "Checkout repository"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Create test m2repo"
+        shell: bash
+        run: |
+          # Create test m2repo with a unique version per run
+          d="m2repo/${GROUP_PATH}/${VERSION}"
+          mkdir -p "$d"
+          echo "jar" > "$d/artifactory-publish-action-${VERSION}.jar"
+          # Artifactory parses POMs on upload; it must be valid XML
+          cat > "$d/artifactory-publish-action-${VERSION}.pom" <<EOF
+          <project xmlns="http://maven.apache.org/POM/4.0.0">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>org.lfreleng.test</groupId>
+            <artifactId>artifactory-publish-action</artifactId>
+            <version>${VERSION}</version>
+          </project>
+          EOF
+          sha1sum "$d/artifactory-publish-action-${VERSION}.jar" \
+            > "$d/artifactory-publish-action-${VERSION}.jar.sha1"
+
+      - name: "Running local action: live upload"
+        id: live
+        uses: $/
+        with:
+          artifactory_url: ${{ vars.ARTIFACTORY_URL }}
+          access_token: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+          repository: ${{ vars.ARTIFACTORY_REPOSITORY }}
+          files_path: "m2repo"
+
+      - name: "Validate upload"
+        shell: bash
+        env:
+          COUNT: ${{ steps.live.outputs.publication_count }}
+        run: |
+          # Validate upload count and presence in the repository
+          set -euo pipefail
+          if [ "$COUNT" != "2" ]; then
+            echo "Error: expected publication_count 2, got '$COUNT' ❌"
+            exit 1
+          fi
+          found=$(jf rt search --count \
+            "${REPO_KEY}/${GROUP_PATH}/${VERSION}/*")
+          if [ "$found" != "2" ]; then
+            echo "Error: expected 2 artifacts in ${REPO_KEY}, got '$found' ❌"
+            exit 1
+          fi
+          echo "Uploaded and found ${found} artifacts ✅"
+
+      - name: "Remove test artifacts"
+        if: always() && steps.live.outcome != 'skipped'
+        shell: bash
+        run: |
+          # Remove test artifacts
+          # Needs DELETE on the repo; warn rather than fail the test
+          target="${REPO_KEY}/${GROUP_PATH}/${VERSION}/"
+          if ! jf rt delete --quiet "$target"; then
+            echo "::warning::Cleanup failed; remove ${target} manually"
+          fi
