@@ -38,6 +38,8 @@ old="https://127.0.0.1:$(cat old.port)"
 # The caller's own CLI home, with an unrelated default server
 export SSL_CERT_FILE="$tmp/cert.pem" JFROG_CLI_HOME_DIR="$tmp/caller-home" \
   CI=true JFROG_CLI_REPORT_USAGE=false
+# As setup-jfrog-cli exports them; uploads must still carry no params
+export JFROG_CLI_BUILD_NAME=job JFROG_CLI_BUILD_NUMBER=1
 jf config add old --url="$old" --access-token=OLDTOKEN --interactive=false > /dev/null 2>&1
 jf config use old > /dev/null 2>&1
 

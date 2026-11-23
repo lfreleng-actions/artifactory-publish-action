@@ -125,6 +125,10 @@ publish() {
   trap 'rm -rf "$JFROG_CLI_HOME_DIR"' EXIT
   export JFROG_CLI_HOME_DIR CI=true JFROG_CLI_REPORT_USAGE=false \
     JFROG_CLI_AVOID_NEW_VERSION_WARNING=true
+  # setup-jfrog-cli exports these for the job; with them set, every
+  # upload gets build and VCS matrix params on its URL and build info
+  # is collected. This action does a plain upload.
+  unset JFROG_CLI_BUILD_NAME JFROG_CLI_BUILD_NUMBER JFROG_CLI_BUILD_PROJECT
   printf '%s' "$ACCESS_TOKEN" | jf config add publish \
     --url="$ARTIFACTORY_URL" --access-token-stdin --interactive=false \
     > /dev/null 2>&1 || fail "could not configure JFrog CLI for $ARTIFACTORY_URL"
