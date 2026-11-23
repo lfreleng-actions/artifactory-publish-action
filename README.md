@@ -62,7 +62,9 @@ The action does not check tag signatures, and `tags: ['v*']` matches by
 name, so any push of a `v*` tag runs this job. Enforce signing
 outside the action: restrict who can create `v*` tags with a tag
 ruleset, and verify the signature in the workflow before building, as
-the first step below does with keys the repository trusts.
+the first step below does. Its keyring is empty apart from the release
+signers' public keys, held in the `RELEASE_SIGNING_KEYS` repository
+or environment variable.
 
 ```yaml
 on:
@@ -80,10 +82,16 @@ jobs:
         with:
           persist-credentials: false
 
+      # Keys come from a protected variable, not the checkout:
+      # a tag creator controls the tagged tree
       - name: 'Verify the tag signature'
+        env:
+          RELEASE_KEYS: ${{ vars.RELEASE_SIGNING_KEYS }}
         run: |
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
+          printf '%s\n' "$RELEASE_KEYS" | gpg --batch --import
           git fetch --force origin "+${GITHUB_REF}:${GITHUB_REF}"
-          gpg --import .github/release-keys.asc
           git tag -v "${GITHUB_REF_NAME}"
 
       - name: 'Build and deploy to a local directory'
