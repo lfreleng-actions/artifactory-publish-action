@@ -77,6 +77,10 @@ runs:
       # server entry, so no credentials here and no default changes
       with:
         version: '2.133.0'
+        # Its post step otherwise runs 'jf c rm' on every server ID in
+        # JFROG_CLI_SERVER_IDS, including ones the caller configured;
+        # with an ID nothing uses, it removes nothing and exits 0
+        custom-server-id: 'artifactory-publish-action'
         # ponytail: plain upload, no build-info; these post steps need
         # platform permissions a project-scoped token lacks
         disable-auto-build-publish: 'true'

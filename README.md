@@ -92,6 +92,8 @@ jobs:
           export GNUPGHOME
           printf '%s\n' "$RELEASE_KEYS" | gpg --batch --import
           git fetch --force origin "+${GITHUB_REF}:${GITHUB_REF}"
+          # The tag must still name the commit this job checked out
+          test "$(git rev-parse "${GITHUB_REF}^{commit}")" = "${GITHUB_SHA}"
           git tag -v "${GITHUB_REF_NAME}"
 
       - name: 'Build and deploy to a local directory'
@@ -195,9 +197,10 @@ where the concept exists in both. These differ on purpose:
   `releases-cdn.jfrog.io` (it redirects there) and the `artifactory_url`
   host.
 - The action configures the CLI in a private, temporary home and names
-  its server on every call. It never uses or changes a server the job
-  configured earlier, and passes the token on stdin, not the command
-  line.
+  its server on every call. It never uses, changes or removes a server
+  the job configured earlier, and passes the token on stdin, not the
+  command line. Later steps in the job do see `jf` 2.133.0 on `PATH`
+  and the `JFROG_CLI_*` defaults `setup-jfrog-cli` exports when unset.
 - `scripts/publish.sh` runs on Bash 3.2 or later with GNU or BSD tools,
   including macOS `/bin/bash`.
 - Test locally with `bash tests/test_publish.sh`, which runs the script
