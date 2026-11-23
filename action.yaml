@@ -13,7 +13,8 @@ inputs:
   artifactory_url:
     description: 'JFrog platform URL (e.g. https://example.jfrog.io)'
     required: true
-  repository:
+  repository_name:
+    # Same name as nexus-publish-action, for a drop-in replacement
     description: 'Target repository key (e.g. libs-release-local)'
     required: true
   files_path:
@@ -44,6 +45,12 @@ outputs:
   dry_run_count:
     description: 'Number of files a dry run would upload (0 otherwise)'
     value: "${{ steps.publish.outputs.dry_run_count }}"
+  published_files:
+    description: 'JSON array of repository paths uploaded (live run)'
+    value: "${{ steps.publish.outputs.published_files }}"
+  failed_files:
+    description: 'JSON array of repository paths not uploaded (live run)'
+    value: "${{ steps.publish.outputs.failed_files }}"
 
 runs:
   using: 'composite'
@@ -54,7 +61,7 @@ runs:
       env:
         ARTIFACTORY_URL: "${{ inputs.artifactory_url }}"
         ACCESS_TOKEN: "${{ inputs.access_token }}"
-        REPOSITORY: "${{ inputs.repository }}"
+        REPOSITORY_NAME: "${{ inputs.repository_name }}"
         FILES_PATH: "${{ inputs.files_path }}"
         UPLOAD_PATH: "${{ inputs.upload_path }}"
         DRY_RUN: "${{ inputs.dry_run }}"
@@ -66,10 +73,10 @@ runs:
       if: steps.validate.outputs.dry_run == 'false'
       # yamllint disable-line rule:line-length
       uses: jfrog/setup-jfrog-cli@4c2f06da03095113100534a16d58d8a252680949  # v5.3.5
-      env:
-        JF_URL: "${{ inputs.artifactory_url }}"
-        JF_ACCESS_TOKEN: "${{ inputs.access_token }}"
+      # Installs the CLI only: publish.sh configures its own private
+      # server entry, so no credentials here and no default changes
       with:
+        version: '2.133.0'
         # ponytail: plain upload, no build-info; these post steps need
         # platform permissions a project-scoped token lacks
         disable-auto-build-publish: 'true'
@@ -81,7 +88,7 @@ runs:
       env:
         ARTIFACTORY_URL: "${{ inputs.artifactory_url }}"
         ACCESS_TOKEN: "${{ inputs.access_token }}"
-        REPOSITORY: "${{ inputs.repository }}"
+        REPOSITORY_NAME: "${{ inputs.repository_name }}"
         FILES_PATH: "${{ inputs.files_path }}"
         UPLOAD_PATH: "${{ inputs.upload_path }}"
         DRY_RUN: "${{ inputs.dry_run }}"

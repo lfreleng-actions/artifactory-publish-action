@@ -44,6 +44,7 @@ jobs:
           egress-policy: 'block'
           allowed-endpoints: >
             ${{ env.CONNECTION_ALLOW_LIST }}
+            releases.jfrog.io:443
 
       - name: "Checkout repository"
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,6 +54,20 @@ jobs:
       - name: "Run publish.sh self-test"
         shell: bash
         run: bash tests/test_publish.sh
+
+      # Same CLI version as action.yaml; no server, no credentials
+      - name: "Install JFrog CLI"
+        # yamllint disable-line rule:line-length
+        uses: jfrog/setup-jfrog-cli@4c2f06da03095113100534a16d58d8a252680949  # v5.3.5
+        with:
+          version: '2.133.0'
+          disable-job-summary: 'true'
+          disable-auto-build-publish: 'true'
+          disable-auto-evidence-collection: 'true'
+
+      - name: "Run publish.sh against the real CLI and a loopback server"
+        shell: bash
+        run: bash tests/test_cli.sh
 
       - name: "Create test m2repo"
         shell: bash
@@ -67,7 +82,7 @@ jobs:
         uses: $/
         with:
           artifactory_url: "https://example.jfrog.io"
-          repository: "libs-release-local"
+          repository_name: "libs-release-local"
           files_path: "m2repo"
           dry_run: "true"
 
@@ -88,7 +103,7 @@ jobs:
         continue-on-error: true
         with:
           artifactory_url: "https://example.jfrog.io"
-          repository: "libs-release-local"
+          repository_name: "libs-release-local"
           files_path: "m2repo"
 
       - name: "Error if step above did NOT fail"
@@ -98,6 +113,23 @@ jobs:
           # Error if step above did NOT fail
           echo "Error: previous test step did NOT fail ❌"
           exit 1
+
+  ### macOS system Bash 3.2 and BSD utilities ###
+  portability:
+    name: "Test publish.sh with macOS /bin/bash"
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      # Harden-runner supports Linux runners only
+      - name: "Checkout repository"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Run publish.sh self-test"
+        run: /bin/bash tests/test_publish.sh
 
   ### Live upload; opt in by setting the ARTIFACTORY_URL variable ###
   integration:
@@ -155,21 +187,36 @@ jobs:
         with:
           artifactory_url: ${{ vars.ARTIFACTORY_URL }}
           access_token: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
-          repository: ${{ vars.ARTIFACTORY_REPOSITORY }}
+          repository_name: ${{ vars.ARTIFACTORY_REPOSITORY }}
           files_path: "m2repo"
+
+      # The action leaves no CLI configuration behind; the checks below
+      # need their own, with the token on stdin rather than in argv
+      - name: "Configure JFrog CLI for checks"
+        if: always() && steps.live.outcome != 'skipped'
+        shell: bash
+        env:
+          ARTIFACTORY_URL: ${{ vars.ARTIFACTORY_URL }}
+          ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+        run: |
+          # Configure JFrog CLI for checks
+          printf '%s' "$ACCESS_TOKEN" | jf config add checks \
+            --url="$ARTIFACTORY_URL" --access-token-stdin --interactive=false
 
       - name: "Validate upload"
         shell: bash
         env:
           COUNT: ${{ steps.live.outputs.publication_count }}
+          PUBLISHED: ${{ steps.live.outputs.published_files }}
         run: |
           # Validate upload count and presence in the repository
           set -euo pipefail
-          if [ "$COUNT" != "2" ]; then
-            echo "Error: expected publication_count 2, got '$COUNT' ❌"
+          listed=$(jq length <<< "$PUBLISHED")
+          if [ "$COUNT" != "2" ] || [ "$listed" != "2" ]; then
+            echo "Error: expected 2 uploads, got '$COUNT'/'$listed' ❌"
             exit 1
           fi
-          found=$(jf rt search --count \
+          found=$(jf rt search --server-id=checks --count \
             "${REPO_KEY}/${GROUP_PATH}/${VERSION}/*")
           if [ "$found" != "2" ]; then
             echo "Error: expected 2 artifacts in ${REPO_KEY}, got '$found' ❌"
@@ -184,6 +231,6 @@ jobs:
           # Remove test artifacts
           # Needs DELETE on the repo; warn rather than fail the test
           target="${REPO_KEY}/${GROUP_PATH}/${VERSION}/"
-          if ! jf rt delete --quiet "$target"; then
+          if ! jf rt delete --server-id=checks --quiet "$target"; then
             echo "::warning::Cleanup failed; remove ${target} manually"
           fi

@@ -4,8 +4,9 @@
 #
 # Uploads a Maven repository tree (an m2repo) to JFrog Artifactory.
 # Usage: publish.sh validate|publish
-# Reads ARTIFACTORY_URL, ACCESS_TOKEN, REPOSITORY, FILES_PATH,
+# Reads ARTIFACTORY_URL, ACCESS_TOKEN, REPOSITORY_NAME, FILES_PATH,
 # UPLOAD_PATH and DRY_RUN from the environment; the action sets them.
+# Portable to Bash 3.2 and BSD utilities (macOS system shell).
 
 set -euo pipefail
 
@@ -13,6 +14,7 @@ set -euo pipefail
 # uploaded ones, so these never upload.
 # ponytail: fixed list; make it an input if a format needs them
 EXCLUDES=('*.md5' '*.sha1' '*.sha256' '*.sha512')
+NL=$'\n'
 
 fail() { echo "::error::$*"; exit 1; }
 
@@ -27,16 +29,15 @@ summary() {
 }
 
 validate() {
-  dry_run="${DRY_RUN:-}"
-  dry_run="${dry_run//[[:space:]]/}"
-  dry_run="${dry_run,,}"
+  dry_run="$(printf '%s' "${DRY_RUN:-}" | tr -d '[:space:]' |
+    tr '[:upper:]' '[:lower:]')"
   [[ "$dry_run" == true || "$dry_run" == false ]] ||
     fail "dry_run must be 'true' or 'false', not '${DRY_RUN:-}'"
 
   [[ "${ARTIFACTORY_URL:-}" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$ ]] ||
     fail 'artifactory_url must be an https:// URL'
-  [[ "${REPOSITORY:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
-    fail 'repository must be a repository key such as libs-release-local'
+  [[ "${REPOSITORY_NAME:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+    fail 'repository_name must be a repository key such as libs-release-local'
 
   upload_path="${UPLOAD_PATH:-}"
   upload_path="${upload_path%/}"
@@ -47,36 +48,67 @@ validate() {
       fail 'upload_path must not contain . or .. segments'
   fi
 
-  files_path="${FILES_PATH:-}"
-  files_path="${files_path%/}"
-  [ -d "$files_path" ] || fail "files_path is not a directory: '${FILES_PATH:-}'"
-  # JFrog CLI reads the source as a wildcard pattern
-  [[ "$files_path" != *[\*\?\(\)\{\}\[\]]* ]] ||
-    fail 'files_path must not contain * ? ( ) { } [ ]'
+  # Resolve one absolute, symlink-free source; a leading / or ./ keeps
+  # cd from reading a name such as '-x' as an option
+  local given="${FILES_PATH:-}"
+  [ -n "$given" ] || fail 'files_path is required'
+  case "$given" in /*) ;; *) given="./$given" ;; esac
+  [ -d "$given" ] || fail "files_path is not a directory: '${FILES_PATH:-}'"
+  src="$(cd -P "$given" && pwd -P)"
+
+  # The CLI follows symlinks out of the tree and skips nothing, so only
+  # plain files and directories may exist; then preview equals upload
+  local odd
+  odd="$(find "$src" ! -type f ! -type d)"
+  [ -z "$odd" ] ||
+    fail "files_path may hold only regular files and directories; found: ${odd//$NL/, }"
+  odd="$(find "$src" -name "*$NL*")"
+  [ -z "$odd" ] || fail 'file names under files_path must not contain newlines'
 
   if [ "$dry_run" = false ] && [ -z "${ACCESS_TOKEN:-}" ]; then
     fail 'a live run needs access_token (dry_run is false)'
   fi
 }
 
+# One path per line, relative to $src; validate() ruled out newlines
 list_files() {
-  local args=()
+  local args=() pattern
   for pattern in "${EXCLUDES[@]}"; do args+=(! -name "$pattern"); done
-  (cd "$files_path" && find . -type f "${args[@]}" | sed 's|^\./||' | sort)
+  (cd "$src" && find . -type f "${args[@]}" | sed 's|^\./||' | LC_ALL=C sort)
 }
 
-target() { echo "${REPOSITORY}/${upload_path:+$upload_path/}"; }
+target() { echo "${REPOSITORY_NAME}/${upload_path:+$upload_path/}"; }
+
+# JSON array of repository paths, one per input line
+json_list() { jq -cRn '[inputs | select(length > 0)]'; }
+
+sha256() {
+  if command -v sha256sum > /dev/null; then sha256sum; else shasum -a 256; fi |
+    cut -d' ' -f1
+}
+
+# On failure the CLI lists no files: selected files the repository now
+# holds with identical content count as published (a re-run included)
+remote_matches() {
+  local remote file
+  remote="$(jf rt search "$(target)*" --server-id=publish --recursive |
+    jq -r '.[] | "\(.path) \(.sha256)"')" || return 1
+  while IFS= read -r file; do
+    if grep -qxF "$(target)$file $(sha256 < "$src/$file")" <<< "$remote"; then
+      echo "$(target)$file"
+    fi
+  done <<< "$files" | LC_ALL=C sort
+}
 
 publish() {
   local files count
   files="$(list_files)"
-  count=0
-  [ -z "$files" ] || count="$(wc -l <<< "$files")"
-  [ "$count" -gt 0 ] || fail "no files to upload under '$files_path'"
+  count="$(printf '%s\n' "$files" | grep -c . || true)"
+  [ "$count" -gt 0 ] || fail "no files to upload under '$src'"
 
   if [ "$dry_run" = true ]; then
     echo "Dry run: would upload $count file(s) to $(target)"
-    echo "  ${files//$'\n'/$'\n'  }"
+    echo "  ${files//$NL/$NL  }"
     out dry_run_count "$count"
     out publication_count 0
     out failed_count 0
@@ -87,28 +119,58 @@ publish() {
 
   command -v jq > /dev/null || fail "jq is required to read upload totals"
 
+  # Private CLI home: an action-owned server entry, never a default
+  # server the caller or an earlier step configured
+  JFROG_CLI_HOME_DIR="$(mktemp -d)"
+  trap 'rm -rf "$JFROG_CLI_HOME_DIR"' EXIT
+  export JFROG_CLI_HOME_DIR CI=true JFROG_CLI_REPORT_USAGE=false \
+    JFROG_CLI_AVOID_NEW_VERSION_WARNING=true
+  printf '%s' "$ACCESS_TOKEN" | jf config add publish \
+    --url="$ARTIFACTORY_URL" --access-token-stdin --interactive=false \
+    > /dev/null 2>&1 || fail "could not configure JFrog CLI for $ARTIFACTORY_URL"
+
   local exclusions result rc=0
   exclusions="$(IFS=';'; echo "${EXCLUDES[*]}")"
-  result="$(jf rt upload "${files_path}/(*)" "$(target){1}" \
-    --flat=false --fail-no-op --exclusions="$exclusions")" || rc=$?
+  # 4 attempts, 2s apart: nexus-publish-action's defaults. Run from
+  # inside $src: JFrog expands '~' and wildcards anywhere in a
+  # source pattern, so the pattern holds no part of the path at all
+  result="$(cd "$src" && jf rt upload '(*)' "$(target){1}" \
+    --server-id=publish --flat=false --fail-no-op --detailed-summary \
+    --retries=3 --retry-wait-time=2s \
+    --exclusions="$exclusions")" || rc=$?
 
-  local ok failed
+  local ok failed published failed_files
   if ! ok="$(jq -er '.totals.success' <<< "$result" 2>/dev/null)" ||
     ! failed="$(jq -er '.totals.failure' <<< "$result" 2>/dev/null)"; then
     # Unreadable output only explains itself when jf also failed
     [ "$rc" -ne 0 ] || fail "could not read upload totals from jf output"
     ok=0
-    failed=0
   fi
+  if [ "$rc" -eq 0 ] && [ "$failed" -eq 0 ]; then
+    published="$(jq -r --arg p "${ARTIFACTORY_URL%/}/artifactory/" \
+      '.files[]?.target | ltrimstr($p)' <<< "$result" | LC_ALL=C sort)"
+  elif ! published="$(remote_matches)"; then
+    # ponytail: unknown, so the whole selection reports as failed
+    echo "::warning::could not search $(target) to identify failed files"
+    published=''
+  fi
+  # Failures are the selection minus what reached the repository
+  failed_files="$(printf '%s\n' "$files" | sed "s|^|$(target)|" |
+    LC_ALL=C comm -23 - <(printf '%s\n' "$published"))"
+  failed="$(printf '%s\n' "$failed_files" | grep -c . || true)"
   out dry_run_count 0
   out publication_count "$ok"
   out failed_count "$failed"
+  out published_files "$(printf '%s\n' "$published" | json_list)"
+  out failed_files "$(printf '%s\n' "$failed_files" | json_list)"
   summary "## Artifactory publish" "" \
     "| Target | Uploaded | Failed |" "|---|---|---|" \
     "| \`$(target)\` | $ok | $failed |"
 
-  [ "$rc" -eq 0 ] && [ "$failed" -eq 0 ] ||
+  if [ "$rc" -ne 0 ] || [ "$failed" -ne 0 ]; then
+    [ -z "$failed_files" ] || echo "Not uploaded:$NL  ${failed_files//$NL/$NL  }"
     fail "upload to $(target) failed: $ok uploaded, $failed failed (jf exit $rc)"
+  fi
   echo "Uploaded $ok file(s) to $(target) ✅"
 }
 
