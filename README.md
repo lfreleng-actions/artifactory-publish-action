@@ -47,7 +47,7 @@ steps:
     with:
       artifactory_url: ${{ vars.ARTIFACTORY_URL }}
       access_token: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
-      repository: 'libs-release-local'
+      repository_name: 'libs-release-local'
       files_path: 'm2repo'
 ```
 
@@ -55,8 +55,14 @@ steps:
 
 A signed tag triggers the build; `mvn deploy` writes to a local
 directory, then the action uploads that tree. Uploads go file by file:
-a failed step can leave a partial version behind; remove it before
-re-running.
+a failed step can leave a partial version behind; `failed_files` lists
+what is missing. Remove the partial version before re-running.
+
+The action does not check tag signatures, and `tags: ['v*']` matches by
+name, so any push of a `v*` tag runs this job. Enforce signing
+outside the action: restrict who can create `v*` tags with a tag
+ruleset, and verify the signature in the workflow before building, as
+the first step below does with keys the repository trusts.
 
 ```yaml
 on:
@@ -74,6 +80,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: 'Verify the tag signature'
+        run: |
+          git fetch --force origin "+${GITHUB_REF}:${GITHUB_REF}"
+          gpg --import .github/release-keys.asc
+          git tag -v "${GITHUB_REF_NAME}"
+
       - name: 'Build and deploy to a local directory'
         run: |
           mvn -B deploy \
@@ -85,7 +97,7 @@ jobs:
         with:
           artifactory_url: ${{ vars.ARTIFACTORY_URL }}
           access_token: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
-          repository: 'libs-release-local'
+          repository_name: 'libs-release-local'
           files_path: 'm2repo'
 ```
 
@@ -100,7 +112,7 @@ on pull requests.
   uses: lfreleng-actions/artifactory-publish-action@<sha>  # v0.1.0
   with:
     artifactory_url: ${{ vars.ARTIFACTORY_URL }}
-    repository: 'libs-release-local'
+    repository_name: 'libs-release-local'
     files_path: 'm2repo'
     dry_run: 'true'
 ```
@@ -122,7 +134,7 @@ but not Delete.
 | Name            | Required | Default | Description                                               |
 | --------------- | -------- | ------- | --------------------------------------------------------- |
 | artifactory_url | True     |         | JFrog platform URL, must use `https://`                   |
-| repository      | True     |         | Target repository key, e.g. `libs-release-local`          |
+| repository_name | True     |         | Target repository key, e.g. `libs-release-local`          |
 | files_path      | True     |         | Directory holding the Maven layout to upload              |
 | access_token    | False    |         | Access token; required unless `dry_run` is `true`         |
 | upload_path     | False    | `''`    | Path prefix within the repository                         |
@@ -133,27 +145,56 @@ but not Delete.
 Checksum files (`*.md5`, `*.sha1`, `*.sha256`, `*.sha512`) never
 upload: Artifactory computes its own. Signatures (`*.asc`) do upload.
 
+`files_path` is a literal path: `~`, a leading `-`, spaces and glob
+characters carry no special meaning. The tree must hold regular files
+and directories, nothing else; the action rejects symlinks and other special
+files, and names containing a newline, before any upload, dry runs
+included. A symlink above `files_path` is fine.
+
 ## Outputs
 
 <!-- markdownlint-disable MD013 -->
 
-| Name              | Description                                     |
-| ----------------- | ----------------------------------------------- |
-| publication_count | Number of files uploaded                        |
-| failed_count      | Number of files that failed to upload           |
-| dry_run_count     | Number of files a dry run would upload, else 0  |
+| Name              | Description                                         |
+| ----------------- | --------------------------------------------------- |
+| publication_count | Number of files uploaded                            |
+| published_files   | JSON array of uploaded repository paths             |
+| failed_count      | Number of files that failed to upload               |
+| failed_files      | JSON array of files under `files_path` not uploaded |
+| dry_run_count     | Number of files a dry run would upload, else 0      |
 
 <!-- markdownlint-enable MD013 -->
 
 Any failed file, or an upload of nothing, fails the step.
 
+## Compared with nexus-publish-action
+
+Input and output names match
+[nexus-publish-action](https://github.com/lfreleng-actions/nexus-publish-action)
+where the concept exists in both. These differ on purpose:
+
+- No `permit_fail` or `fail_fast`: a release must not pass with a
+  partial upload, so any failed file fails the step.
+- No `file_pattern`: the whole Maven tree uploads, minus checksum files.
+- No `upload_attempts` or `retry_delay` inputs: each file gets the
+  Nexus defaults, 4 attempts 2 seconds apart.
+- No staging inputs; see [No staging](#no-staging).
+
 ## Notes
 
-- A live run downloads the JFrog CLI through
-  `jfrog/setup-jfrog-cli`; a runner with a blocking egress policy must
-  allow `releases.jfrog.io` and the `artifactory_url` host.
-- Test locally with `bash tests/test_publish.sh`; it runs the script
-  against a fake `jf`.
+- A live run installs JFrog CLI 2.133.0 through `jfrog/setup-jfrog-cli`;
+  a runner with a blocking egress policy must allow `releases.jfrog.io`
+  and the `artifactory_url` host.
+- The action configures the CLI in a private, temporary home and names
+  its server on every call. It never uses or changes a server the job
+  configured earlier, and passes the token on stdin, not the command
+  line.
+- `scripts/publish.sh` runs on Bash 3.2 or later with GNU or BSD tools,
+  including macOS `/bin/bash`.
+- Test locally with `bash tests/test_publish.sh`, which runs the script
+  against a fake `jf`, and `bash tests/test_cli.sh`, which runs the real
+  JFrog CLI against a loopback HTTPS server; the latter needs `jf`,
+  `jq`, `openssl` and `python3`.
 - The live upload test in `testing.yaml` runs when the repository sets
   the `ARTIFACTORY_URL` and `ARTIFACTORY_REPOSITORY` repository
   variables, plus the `ARTIFACTORY_ACCESS_TOKEN` secret in the
