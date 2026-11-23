@@ -183,8 +183,9 @@ where the concept exists in both. These differ on purpose:
 ## Notes
 
 - A live run installs JFrog CLI 2.133.0 through `jfrog/setup-jfrog-cli`;
-  a runner with a blocking egress policy must allow `releases.jfrog.io`
-  and the `artifactory_url` host.
+  a runner with a blocking egress policy must allow `releases.jfrog.io`,
+  `releases-cdn.jfrog.io` (it redirects there) and the `artifactory_url`
+  host.
 - The action configures the CLI in a private, temporary home and names
   its server on every call. It never uses or changes a server the job
   configured earlier, and passes the token on stdin, not the command
