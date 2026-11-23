@@ -38,8 +38,12 @@ old="https://127.0.0.1:$(cat old.port)"
 # The caller's own CLI home, with an unrelated default server
 export SSL_CERT_FILE="$tmp/cert.pem" JFROG_CLI_HOME_DIR="$tmp/caller-home" \
   CI=true JFROG_CLI_REPORT_USAGE=false
-# As setup-jfrog-cli exports them; uploads must still carry no params
-export JFROG_CLI_BUILD_NAME=job JFROG_CLI_BUILD_NUMBER=1
+# As in a GitHub job after setup-jfrog-cli: jf would add build.* and
+# vcs.* params to every upload URL; uploads must carry none
+export JFROG_CLI_BUILD_NAME=job JFROG_CLI_BUILD_NUMBER=1 GITHUB_ACTIONS=true \
+  GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=org/repo \
+  GITHUB_SHA=0123abc GITHUB_REF=refs/heads/main GITHUB_WORKFLOW=test \
+  GITHUB_RUN_ID=1
 jf config add old --url="$old" --access-token=OLDTOKEN --interactive=false > /dev/null 2>&1
 jf config use old > /dev/null 2>&1
 
