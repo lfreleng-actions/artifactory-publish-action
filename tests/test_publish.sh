@@ -97,9 +97,22 @@ p=libs-staging-local/org/example/app/1.0.0/app-1.0.0
 hit='[{"path":"'$p'.jar","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
   {"path":"'$p'.pom","sha256":"stale"}]'
 run fail publish JFROG_FAKE_OUT="$part" JFROG_FAKE_RC=1 JFROG_FAKE_SEARCH="$hit"
+has publication_count=1 "$tmp/out"
 has failed_count=2 "$tmp/out"
 has "published_files=[\"$p.jar\"]" "$tmp/out"
 has "failed_files=[\"$p.pom\",\"$p.pom.asc\"]" "$tmp/out"
+# jf exits 0 yet reports a failure, and every file is already there
+# with identical content: still a failure, which names Delete
+empty=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+all='[{"path":"'$p'.jar","sha256":"'$empty'"},{"path":"'$p'.pom","sha256":"'$empty'"},
+  {"path":"'$p'.pom.asc","sha256":"'$empty'"}]'
+run fail publish JFROG_FAKE_OUT="$part" JFROG_FAKE_SEARCH="$all"
+has publication_count=3 "$tmp/out"
+has failed_count=0 "$tmp/out"
+has "published_files=[\"$p.jar\",\"$p.pom\",\"$p.pom.asc\"]" "$tmp/out"
+has 'failed_files=[]' "$tmp/out"
+grep -qF 'needs Delete permission' "$tmp/log" ||
+  { cat "$tmp/log"; echo 'FAIL: error does not name Delete'; exit 1; }
 run fail publish JFROG_FAKE_OUT='not json' JFROG_FAKE_RC=2
 # Unreadable totals never pass as success, even when jf exits 0
 run fail publish JFROG_FAKE_OUT='not json'
