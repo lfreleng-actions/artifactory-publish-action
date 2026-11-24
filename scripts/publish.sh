@@ -88,10 +88,16 @@ sha256() {
 }
 
 # On failure the CLI lists no files: selected files the repository now
-# holds with identical content count as published (a re-run included)
+# holds with identical content count as published (a re-run included).
+# One pattern per selected file keeps the search to this upload, not
+# everything under the target, which may be the whole repository.
 remote_matches() {
-  local remote file
-  remote="$(jf rt search "$(target)*" --server-id=publish --recursive |
+  local remote file spec="$JFROG_CLI_HOME_DIR/search.json"
+  printf '%s\n' "$files" |
+    jq -Rn --arg t "$(target)" \
+      '{files: [inputs | select(length > 0) | {pattern: ($t + .)}]}' \
+      > "$spec" || return 1
+  remote="$(jf rt search --spec="$spec" --server-id=publish |
     jq -r '.[] | "\(.path) \(.sha256)"')" || return 1
   while IFS= read -r file; do
     if grep -qxF "$(target)$file $(sha256 < "$src/$file")" <<< "$remote"; then

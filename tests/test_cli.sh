@@ -114,4 +114,12 @@ has failed_count=1
 has 'failed_files=["repo/org/x/1/reject-1.jar"]'
 has 'published_files=["repo/org/x/1/x-1.jar","repo/org/x/1/x-1.pom"]'
 
+# The follow-up search names each selected file, never a wildcard over
+# the target (with no upload_path, that is the whole repository)
+aql="$(jq -r 'select(.path | endswith("/api/search/aql")) | .body' good.log)"
+[ "$(printf '%s\n' "$aql" | grep -c 'items.find')" -eq 3 ] ||
+  { echo "$aql"; echo 'FAIL: expected one search per selected file'; exit 1; }
+if grep -qF "\"\$match\"" <<< "$aql"; then
+  echo "$aql"; echo 'FAIL: search used a wildcard'; exit 1
+fi
 echo 'All real-CLI publish tests passed ✅'
