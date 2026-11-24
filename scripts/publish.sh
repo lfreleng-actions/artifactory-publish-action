@@ -163,7 +163,9 @@ publish() {
     [ "$rc" -ne 0 ] || fail "could not read upload totals from jf output"
     ok=0
   fi
+  local succeeded=false
   if [ "$rc" -eq 0 ] && [ "$failed" -eq 0 ]; then
+    succeeded=true
     published="$(jq -r --arg p "${ARTIFACTORY_URL%/}/artifactory/" \
       '.files[]?.target | ltrimstr($p)' <<< "$result" | LC_ALL=C sort)"
   elif ! published="$(remote_matches)"; then
@@ -175,6 +177,11 @@ publish() {
   failed_files="$(printf '%s\n' "$files" | sed "s|^|$(target)|" |
     LC_ALL=C comm -23 - <(printf '%s\n' "$published"))"
   failed="$(printf '%s\n' "$failed_files" | grep -c . || true)"
+  # After a failure the CLI's totals cannot tell this run's uploads from
+  # an earlier run's, so count what the repository holds, as listed
+  if [ "$succeeded" = false ]; then
+    ok="$(printf '%s\n' "$published" | grep -c . || true)"
+  fi
   out dry_run_count 0
   out publication_count "$ok"
   out failed_count "$failed"
@@ -184,8 +191,15 @@ publish() {
     "| Target | Uploaded | Failed |" "|---|---|---|" \
     "| \`$(target)\` | $ok | $failed |"
 
-  if [ "$rc" -ne 0 ] || [ "$failed" -ne 0 ]; then
-    [ -z "$failed_files" ] || echo "Not uploaded:$NL  ${failed_files//$NL/$NL  }"
+  if [ "$succeeded" = false ] || [ "$failed" -ne 0 ]; then
+    if [ "$failed" -eq 0 ]; then
+      # A Deploy-only token gets 403 on every path that already exists
+      fail "upload to $(target) failed (jf exit $rc), but every selected" \
+        "file is already in the repository with identical content;" \
+        "re-uploading an existing path needs Delete permission" \
+        "(see 'Token permissions' in the README)"
+    fi
+    echo "Not uploaded:$NL  ${failed_files//$NL/$NL  }"
     fail "upload to $(target) failed: $ok uploaded, $failed failed (jf exit $rc)"
   fi
   echo "Uploaded $ok file(s) to $(target) ✅"

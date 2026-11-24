@@ -25,15 +25,19 @@ cd "$tmp"
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=127.0.0.1 \
   -addext subjectAltName=IP:127.0.0.1 -keyout key.pem -out cert.pem 2> /dev/null
-for name in good old; do
-  python3 "$here/artifactory_fixture.py" cert.pem key.pem "$name.port" "$name.log" &
+for name in good old deny; do
+  # deny: a Deploy-only token, refused a PUT to a path that exists
+  deny_overwrite=false; [ "$name" != deny ] || deny_overwrite=true
+  FIXTURE_DENY_OVERWRITE="$deny_overwrite" \
+    python3 "$here/artifactory_fixture.py" cert.pem key.pem "$name.port" "$name.log" &
   pids+=($!)
 done
-for name in good old; do
+for name in good old deny; do
   for _ in $(seq 50); do [ -s "$name.port" ] && break; sleep 0.1; done
 done
 good="https://127.0.0.1:$(cat good.port)"
 old="https://127.0.0.1:$(cat old.port)"
+deny="https://127.0.0.1:$(cat deny.port)"
 
 # The caller's own CLI home, with an unrelated default server
 export SSL_CERT_FILE="$tmp/cert.pem" JFROG_CLI_HOME_DIR="$tmp/caller-home" \
@@ -61,6 +65,14 @@ expect_puts() {
   [ "$(puts)" = "$1" ] || { echo "FAIL: uploaded:"; puts; echo "expected:"; echo "$1"; exit 1; }
 }
 has() { grep -qxF -- "$1" out || { echo "FAIL: '$1' not in outputs:"; cat out; exit 1; }; }
+# publication_count always equals the length of published_files
+consistent() {
+  local count listed
+  count="$(sed -n 's/^publication_count=//p' out)"
+  listed="$(sed -n 's/^published_files=//p' out | jq length)"
+  [ "$count" = "$listed" ] ||
+    { echo "FAIL: publication_count $count, published_files $listed"; cat out; exit 1; }
+}
 
 tree() { # tree <dir>: a small m2repo, checksums included
   mkdir -p -- "$1/org/x/1"
@@ -113,6 +125,7 @@ has publication_count=2
 has failed_count=1
 has 'failed_files=["repo/org/x/1/reject-1.jar"]'
 has 'published_files=["repo/org/x/1/x-1.jar","repo/org/x/1/x-1.pom"]'
+consistent
 
 # The follow-up search names each selected file, never a wildcard over
 # the target (with no upload_path, that is the whole repository)
@@ -122,4 +135,26 @@ aql="$(jq -r 'select(.path | endswith("/api/search/aql")) | .body' good.log)"
 if grep -qF "\"\$match\"" <<< "$aql"; then
   echo "$aql"; echo 'FAIL: search used a wildcard'; exit 1
 fi
+
+# Re-runs with a Deploy-only token: every path that exists gets 403.
+# An identical re-run fails with nothing missing, and says why.
+tree rerun
+run pass rerun ARTIFACTORY_URL="$deny"
+run fail rerun ARTIFACTORY_URL="$deny"
+has publication_count=2
+has failed_count=0
+has 'published_files=["repo/org/x/1/x-1.jar","repo/org/x/1/x-1.pom"]'
+has 'failed_files=[]'
+consistent
+grep -qF 'needs Delete permission' log ||
+  { cat log; echo 'FAIL: identical re-run error does not name Delete'; exit 1; }
+
+# A re-run that adds a file: it uploads, the rest get 403
+echo src > rerun/org/x/1/x-1-sources.jar
+run fail rerun ARTIFACTORY_URL="$deny"
+has publication_count=3
+has failed_count=0
+has 'published_files=["repo/org/x/1/x-1-sources.jar","repo/org/x/1/x-1.jar","repo/org/x/1/x-1.pom"]'
+has 'failed_files=[]'
+consistent
 echo 'All real-CLI publish tests passed ✅'

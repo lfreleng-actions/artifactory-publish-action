@@ -177,6 +177,16 @@ included. A symlink above `files_path` is fine.
 
 Any failed file, or an upload of nothing, fails the step.
 
+After a failed upload, the CLI does not list the files it uploaded, so
+`publication_count` and `published_files` describe the selected files
+the repository holds with identical content. That may include files an
+earlier run uploaded, and `publication_count` always equals the length
+of `published_files`. `failed_count` and `failed_files` describe the
+selected files the repository lacks, or holds with different content.
+A re-run whose files are all present still fails without Delete
+permission (see [Token permissions](#token-permissions)); its error
+says so, and `failed_count` is 0.
+
 ## Compared with nexus-publish-action
 
 Input and output names match
