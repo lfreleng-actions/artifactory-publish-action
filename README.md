@@ -211,9 +211,15 @@ where the concept exists in both. These differ on purpose:
   the job configured earlier, and passes the token on stdin, not the
   command line. The job's `JF_URL`, `JF_USER`, `JF_PASSWORD`,
   `JF_ACCESS_TOKEN` and `JF_ENV_*` variables neither reach the upload
-  nor change the job's CLI configuration. Later steps in the job do see
-  `jf` 2.133.0 on `PATH` and the `JFROG_CLI_*` defaults
-  `setup-jfrog-cli` exports when unset.
+  nor change the job's CLI configuration.
+- Setting up the CLI changes the rest of the caller's job:
+  `setup-jfrog-cli` puts `jf` 2.133.0 on the job's `PATH` and exports
+  about 15 `JFROG_CLI_*` variables, build-info ones such as
+  `JFROG_CLI_BUILD_NAME` and `JFROG_CLI_BUILD_NUMBER` included. The
+  action's own upload ignores them. A later step that runs `jf` itself
+  inherits both, and should configure and name its own server, as the
+  "Configure JFrog CLI for checks" step in `testing.yaml` does. The
+  action writes no JFrog command summary to the job.
 - `scripts/publish.sh` runs on Bash 3.2 or later with GNU or BSD tools,
   including macOS `/bin/bash`.
 - Test locally with `bash tests/test_publish.sh`, which runs the script
