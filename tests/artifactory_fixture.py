@@ -8,16 +8,22 @@ Logs one JSON line per request (method, path, authorization, body)
 and writes its port once listening. A PUT whose path contains
 "reject" gets 403; every other PUT succeeds and is stored, and an AQL
 search returns every stored file.
+
+With FIXTURE_DENY_OVERWRITE=true in its environment, a PUT to a path
+already stored also gets 403, as Artifactory answers a token that has
+Deploy but not Delete permission.
 """
 
 import hashlib
 import json
+import os
 import ssl
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import final, override
 
 STORED: dict[str, str] = {}
+DENY_OVERWRITE = os.environ.get("FIXTURE_DENY_OVERWRITE") == "true"
 
 
 @final
@@ -36,6 +42,8 @@ class Handler(BaseHTTPRequestHandler):
             }
             _ = log.write(json.dumps(entry) + "\n")
         status = 403 if self.command == "PUT" and "reject" in self.path else 200
+        if self.command == "PUT" and DENY_OVERWRITE and self.path in STORED:
+            status = 403
         if status == 200 and self.command == "PUT":
             status = 201
         reply = b'{"version":"7.104.0"}' if status < 400 else b'{"errors":[]}'

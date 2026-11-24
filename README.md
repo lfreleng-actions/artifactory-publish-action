@@ -64,7 +64,10 @@ outside the action: restrict who can create `v*` tags with a tag
 ruleset, and verify the signature in the workflow before building, as
 the first step below does. Its keyring is empty apart from the release
 signers' public keys, held in the `RELEASE_SIGNING_KEYS` repository
-or environment variable.
+or environment variable. A valid signature from any key in that
+keyring would pass `git tag -v`, so the step also requires the signing
+key's primary fingerprint to appear in `RELEASE_SIGNING_FINGERPRINTS`,
+one per line, spaces and case ignored.
 
 ```yaml
 on:
@@ -87,6 +90,7 @@ jobs:
       - name: 'Verify the tag signature'
         env:
           RELEASE_KEYS: ${{ vars.RELEASE_SIGNING_KEYS }}
+          RELEASE_FINGERPRINTS: ${{ vars.RELEASE_SIGNING_FINGERPRINTS }}
         run: |
           GNUPGHOME="$(mktemp -d)"
           export GNUPGHOME
@@ -94,7 +98,21 @@ jobs:
           git fetch --force origin "+${GITHUB_REF}:${GITHUB_REF}"
           # The tag must still name the commit this job checked out
           test "$(git rev-parse "${GITHUB_REF}^{commit}")" = "${GITHUB_SHA}"
-          git tag -v "${GITHUB_REF_NAME}"
+          # Verify, keeping GnuPG's status lines, which go to stderr;
+          # VALIDSIG's last field is the primary key's fingerprint
+          status="$(git verify-tag --raw "${GITHUB_REF_NAME}" 2>&1 >/dev/null)"
+          signer="$(awk '$2 == "VALIDSIG" { n++; fp = $NF }
+            END { if (n == 1) print toupper(fp) }' <<< "$status")"
+          if [ -z "$signer" ]; then
+            echo '::error::No single valid signature on the tag'
+            exit 1
+          fi
+          allowed="$(tr -d ' \t\r' <<< "$RELEASE_FINGERPRINTS" |
+            tr '[:lower:]' '[:upper:]')"
+          if ! grep -qxF -- "$signer" <<< "$allowed"; then
+            echo "::error::Tag signed by $signer, not a listed release key"
+            exit 1
+          fi
 
       - name: 'Build and deploy to a local directory'
         run: |
@@ -177,6 +195,16 @@ included. A symlink above `files_path` is fine.
 
 Any failed file, or an upload of nothing, fails the step.
 
+After a failed upload, the CLI does not list the files it uploaded, so
+`publication_count` and `published_files` describe the selected files
+the repository holds with identical content. That may include files an
+earlier run uploaded, and `publication_count` always equals the length
+of `published_files`. `failed_count` and `failed_files` describe the
+selected files the repository lacks, or holds with different content.
+A re-run whose files are all present still fails without Delete
+permission (see [Token permissions](#token-permissions)); its error
+says so, and `failed_count` is 0.
+
 ## Compared with nexus-publish-action
 
 Input and output names match
@@ -201,9 +229,15 @@ where the concept exists in both. These differ on purpose:
   the job configured earlier, and passes the token on stdin, not the
   command line. The job's `JF_URL`, `JF_USER`, `JF_PASSWORD`,
   `JF_ACCESS_TOKEN` and `JF_ENV_*` variables neither reach the upload
-  nor change the job's CLI configuration. Later steps in the job do see
-  `jf` 2.133.0 on `PATH` and the `JFROG_CLI_*` defaults
-  `setup-jfrog-cli` exports when unset.
+  nor change the job's CLI configuration.
+- Setting up the CLI changes the rest of the caller's job:
+  `setup-jfrog-cli` puts `jf` 2.133.0 on the job's `PATH` and exports
+  about 15 `JFROG_CLI_*` variables, build-info ones such as
+  `JFROG_CLI_BUILD_NAME` and `JFROG_CLI_BUILD_NUMBER` included. The
+  action's own upload ignores them. A later step that runs `jf` itself
+  inherits both, and should configure and name its own server, as the
+  "Configure JFrog CLI for checks" step in `testing.yaml` does. The
+  action writes no JFrog command summary to the job.
 - `scripts/publish.sh` runs on Bash 3.2 or later with GNU or BSD tools,
   including macOS `/bin/bash`.
 - Test locally with `bash tests/test_publish.sh`, which runs the script

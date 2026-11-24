@@ -95,6 +95,8 @@ runs:
         # platform permissions a project-scoped token lacks
         disable-auto-build-publish: 'true'
         disable-auto-evidence-collection: 'true'
+        # The upload writes no JFrog command summary to the caller's job
+        disable-job-summary: 'true'
 
     - name: 'Publish to Artifactory'
       id: publish
