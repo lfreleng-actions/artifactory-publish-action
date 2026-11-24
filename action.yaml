@@ -75,6 +75,16 @@ runs:
       uses: jfrog/setup-jfrog-cli@4c2f06da03095113100534a16d58d8a252680949  # v5.3.5
       # Installs the CLI only: publish.sh configures its own private
       # server entry, so no credentials here and no default changes
+      # It reads JF_URL, JF_USER, JF_PASSWORD, JF_ACCESS_TOKEN and any
+      # JF_ENV_* from the job: blank the first four, so it neither adds
+      # a server nor fails on the caller's credentials, and point its
+      # CLI home at a throwaway directory, where JF_ENV_* imports land
+      env:
+        JF_URL: ''
+        JF_USER: ''
+        JF_PASSWORD: ''
+        JF_ACCESS_TOKEN: ''
+        JFROG_CLI_HOME_DIR: "${{ runner.temp }}/jf-setup-home"
       with:
         version: '2.133.0'
         # Its post step otherwise runs 'jf c rm' on every server ID in

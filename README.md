@@ -199,8 +199,11 @@ where the concept exists in both. These differ on purpose:
 - The action configures the CLI in a private, temporary home and names
   its server on every call. It never uses, changes or removes a server
   the job configured earlier, and passes the token on stdin, not the
-  command line. Later steps in the job do see `jf` 2.133.0 on `PATH`
-  and the `JFROG_CLI_*` defaults `setup-jfrog-cli` exports when unset.
+  command line. The job's `JF_URL`, `JF_USER`, `JF_PASSWORD`,
+  `JF_ACCESS_TOKEN` and `JF_ENV_*` variables neither reach the upload
+  nor change the job's CLI configuration. Later steps in the job do see
+  `jf` 2.133.0 on `PATH` and the `JFROG_CLI_*` defaults
+  `setup-jfrog-cli` exports when unset.
 - `scripts/publish.sh` runs on Bash 3.2 or later with GNU or BSD tools,
   including macOS `/bin/bash`.
 - Test locally with `bash tests/test_publish.sh`, which runs the script
