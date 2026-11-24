@@ -37,13 +37,13 @@ publisher for that.
 
 ## Usage Example
 
-<!-- markdownlint-disable MD046 -->
+<!-- markdownlint-disable MD013 MD046 -->
 
 ```yaml
 steps:
   - name: 'Publish to Artifactory'
     # yamllint disable-line rule:line-length
-    uses: lfreleng-actions/artifactory-publish-action@<sha>  # v0.1.0
+    uses: lfreleng-actions/artifactory-publish-action@c3a53e158f0b6dbc722dfc913cc93e7fa1454ce0  # v0.0.1
     with:
       artifactory_url: ${{ vars.ARTIFACTORY_URL }}
       access_token: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
@@ -121,7 +121,7 @@ jobs:
 
       - name: 'Publish to Artifactory'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/artifactory-publish-action@<sha>  # v0.1.0
+        uses: lfreleng-actions/artifactory-publish-action@c3a53e158f0b6dbc722dfc913cc93e7fa1454ce0  # v0.0.1
         with:
           artifactory_url: ${{ vars.ARTIFACTORY_URL }}
           access_token: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
@@ -137,7 +137,7 @@ on pull requests.
 ```yaml
 - name: 'Preview Artifactory upload'
   # yamllint disable-line rule:line-length
-  uses: lfreleng-actions/artifactory-publish-action@<sha>  # v0.1.0
+  uses: lfreleng-actions/artifactory-publish-action@c3a53e158f0b6dbc722dfc913cc93e7fa1454ce0  # v0.0.1
   with:
     artifactory_url: ${{ vars.ARTIFACTORY_URL }}
     repository_name: 'libs-release-local'
@@ -145,7 +145,7 @@ on pull requests.
     dry_run: 'true'
 ```
 
-<!-- markdownlint-enable MD046 -->
+<!-- markdownlint-enable MD013 MD046 -->
 
 ## Token permissions
 
