@@ -64,7 +64,10 @@ outside the action: restrict who can create `v*` tags with a tag
 ruleset, and verify the signature in the workflow before building, as
 the first step below does. Its keyring is empty apart from the release
 signers' public keys, held in the `RELEASE_SIGNING_KEYS` repository
-or environment variable.
+or environment variable. A valid signature from any key in that
+keyring would pass `git tag -v`, so the step also requires the signing
+key's primary fingerprint to appear in `RELEASE_SIGNING_FINGERPRINTS`,
+one per line, spaces and case ignored.
 
 ```yaml
 on:
@@ -87,6 +90,7 @@ jobs:
       - name: 'Verify the tag signature'
         env:
           RELEASE_KEYS: ${{ vars.RELEASE_SIGNING_KEYS }}
+          RELEASE_FINGERPRINTS: ${{ vars.RELEASE_SIGNING_FINGERPRINTS }}
         run: |
           GNUPGHOME="$(mktemp -d)"
           export GNUPGHOME
@@ -94,7 +98,21 @@ jobs:
           git fetch --force origin "+${GITHUB_REF}:${GITHUB_REF}"
           # The tag must still name the commit this job checked out
           test "$(git rev-parse "${GITHUB_REF}^{commit}")" = "${GITHUB_SHA}"
-          git tag -v "${GITHUB_REF_NAME}"
+          # Verify, keeping GnuPG's status lines, which go to stderr;
+          # VALIDSIG's last field is the primary key's fingerprint
+          status="$(git verify-tag --raw "${GITHUB_REF_NAME}" 2>&1 >/dev/null)"
+          signer="$(awk '$2 == "VALIDSIG" { n++; fp = $NF }
+            END { if (n == 1) print toupper(fp) }' <<< "$status")"
+          if [ -z "$signer" ]; then
+            echo '::error::No single valid signature on the tag'
+            exit 1
+          fi
+          allowed="$(tr -d ' \t\r' <<< "$RELEASE_FINGERPRINTS" |
+            tr '[:lower:]' '[:upper:]')"
+          if ! grep -qxF -- "$signer" <<< "$allowed"; then
+            echo "::error::Tag signed by $signer, not a listed release key"
+            exit 1
+          fi
 
       - name: 'Build and deploy to a local directory'
         run: |
