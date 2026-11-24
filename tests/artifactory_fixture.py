@@ -92,6 +92,7 @@ def main() -> None:
     """Serve on an ephemeral loopback port until killed."""
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(sys.argv[1], sys.argv[2])
     server.socket = context.wrap_socket(server.socket, server_side=True)
     with open(sys.argv[3], "w", encoding="utf-8") as port_file:
