@@ -60,6 +60,10 @@ mkdir -p "$tmp/odd/a"; ln -s /etc/passwd "$tmp/odd/a/link"
 run fail validate FILES_PATH="$tmp/odd"
 rm "$tmp/odd/a/link"; touch "$tmp/odd/a/new${NL:=$'\n'}line.jar"
 run fail validate FILES_PATH="$tmp/odd"
+# A trailing newline must not resolve to the sibling without it
+mkdir -p "$tmp/m2repo$NL"
+run fail validate FILES_PATH="$tmp/m2repo$NL"
+rmdir "$tmp/m2repo$NL"
 
 # Dry run: counts files minus checksums, never calls jf
 rm -f "$tmp/args"

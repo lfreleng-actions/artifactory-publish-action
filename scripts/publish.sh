@@ -54,7 +54,13 @@ validate() {
   [ -n "$given" ] || fail 'files_path is required'
   case "$given" in /*) ;; *) given="./$given" ;; esac
   [ -d "$given" ] || fail "files_path is not a directory: '${FILES_PATH:-}'"
-  src="$(cd -P "$given" && pwd -P)"
+  # A sentinel keeps $(...) from dropping trailing newlines, which would
+  # turn 'm2<newline>' into a different directory, 'm2'
+  src="$(cd -P "$given" && pwd -P && echo .)" ||
+    fail "cannot enter files_path: '${FILES_PATH:-}'"
+  src="${src%.}"
+  src="${src%"$NL"}"
+  [[ "$src" != *"$NL"* ]] || fail 'files_path must not contain newlines'
 
   # The CLI follows symlinks out of the tree and skips nothing, so only
   # plain files and directories may exist; then preview equals upload
